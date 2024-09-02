@@ -4,19 +4,10 @@ from nltk.corpus import stopwords
 from nltk.probability import FreqDist
 from collections import defaultdict
 from sklearn.naive_bayes import MultinomialNB
-import string
-
-# Download required NLTK data
-nltk.download('punkt')
-nltk.download('stopwords')
-
-# Function to preprocess a tweet
-def preprocess_tweet(tweet):
-    tokens = word_tokenize(tweet.lower())
-    tokens = [token.strip(string.punctuation) for token in tokens]
-    tokens = [token for token in tokens if token.isalpha() and token not in stopwords.words('english')]
-    return tokens
-
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import pandas as pd
+import numpy as np
 
 # Function to train the Naive Bayes model
 def train_nb_model(tweets, labels):
@@ -28,22 +19,30 @@ def train_nb_model(tweets, labels):
     prior_neg = 1 - prior_pos
     return word_freq, prior_pos, prior_neg
 
-# Function to make predictions using the Naive Bayes model
-def make_predictions(nb_model, tweets):
+# Function to preprocess tweets
+def preprocess_tweet(tweet):
+    tokens = word_tokenize(tweet.lower())
+    tokens = [token for token in tokens if token.isalpha()]
+    stop_words = set(stopwords.words('english'))
+    tokens = [token for token in tokens if token not in stop_words]
+    return tokens
+
+# Function to make predictions
+def make_predictions(nb_model, input_tokens):
     word_freq, prior_pos, prior_neg = nb_model
     predictions = []
-    for tokens in tweets:
+    for tokens in input_tokens:
         pos_prob = prior_pos
         neg_prob = prior_neg
         for token in tokens:
-            pos_prob *= word_freq[1].freq(token)
-            neg_prob *= word_freq[0].freq(token)
+            pos_prob *= (word_freq[1][token] + 1) / (sum(word_freq[1].values()) + len(word_freq[1]))
+            neg_prob *= (word_freq[0][token] + 1) / (sum(word_freq[0].values()) + len(word_freq[0]))
         predictions.append(1 if pos_prob > neg_prob else 0)
     return predictions
 
-# Load the labeled tweets for training
+# Load the labeled tweets for training (basic example)
 labeled_tweets = [
-    ("i nice to meet you.... thank you....", 1),
+    ("I am happy to meet you.... thank you....", 1),
     ("This product is terrible.", 0),
     ("I'm so happy with this purchase.", 1),
     ("This company is awful.", 0),
@@ -52,75 +51,82 @@ labeled_tweets = [
 labeled_tokens = [preprocess_tweet(tweet) for tweet, _ in labeled_tweets]
 labels = [label for _, label in labeled_tweets]
 
-# Train the Naive Bayes model
-nb_model = train_nb_model(labeled_tokens, labels)
+# Train the custom Naive Bayes model
+nb_model_custom = train_nb_model(labeled_tokens, labels)
 
 # Load the input tweets from input.txt
+# NOTE: You need to create a file named "tweet.txt" containing the input tweets
 with open('tweet.txt', 'r') as f:
     input_tweets = [line.strip() for line in f.readlines()]
 
 # Preprocess the input tweets
 input_tokens = [preprocess_tweet(tweet) for tweet in input_tweets]
 
-# Make predictions
-predictions = make_predictions(nb_model, input_tokens)
+# Make predictions using the custom Naive Bayes model
+predictions_custom = make_predictions(nb_model_custom, input_tokens)
 
-# Print the results
+# Print the results for the custom Naive Bayes model
 for i, tweet in enumerate(input_tweets):
-    print(f'Tweet: {tweet}, Sentiment: {"Positive" if predictions[i] == 1 else "Negative"}')
+    print(f'Tweet: {tweet}, Sentiment: {"Positive" if predictions_custom[i] == 1 else "Negative"}')
 
-# Compute ratios of positive words to negative words
-positive_words = set()
-negative_words = set()
-for tokens, label in zip(labeled_tokens, labels):
-    for token in tokens:
-        if label == 1:
-            positive_words.add(token)
-        else:
-            negative_words.add(token)
-print(f'Ratio of positive words to negative words: {len(positive_words) / len(negative_words)}')
+# Load the training and validation datasets
+# NOTE: You need to create files named "twitter_training.csv" and "twitter_validation.csv" containing the training and validation datasets
+train_df = pd.read_csv('twitter_training.csv')
+validation_df = pd.read_csv('twitter_validation.csv')
 
-# Do some error analysis
-error_count = 0
-false_positives = 0
-false_negatives = 0
-true_positives = 0
-true_negatives = 0
-for i, (tweet, label) in enumerate(zip(labeled_tweets, labels)):
-    prediction = make_predictions(nb_model, [preprocess_tweet(tweet[0])])[0]
-    if prediction != label:
-        error_count += 1
-        if prediction == 1 and label == 0:
-            false_positives += 1
-        elif prediction == 0 and label == 1:
-            false_negatives += 1
-    else:
-        if prediction == 1 and label == 1:
-            true_positives += 1
-        elif prediction == 0 and label == 0:
-            true_negatives += 1
-print(f'Error rate: {error_count / len(labeled_tweets)}')
-print(f'False positive rate: {false_positives / len(labeled_tweets)}')
-print(f'False negative rate: {false_negatives / len(labeled_tweets)}')
-print(f'True positive rate: {true_positives / len(labeled_tweets)}')
-print(f'True negative rate: {true_negatives / len(labeled_tweets)}')
+# Rename columns for clarity
+train_df.columns = ['ID', 'Keyword', 'Sentiment', 'Tweet']
+validation_df.columns = ['ID', 'Keyword', 'Sentiment', 'Tweet']
 
-# Analyze the most common positive and negative words
-positive_word_freq = nb_model[0][1]
-negative_word_freq = nb_model[0][0]
-print("Most common positive words:")
-for word, freq in positive_word_freq.most_common(10):
-    print(f'{word}: {freq}')
-print("Most common negative words:")
-for word, freq in negative_word_freq.most_common(10):
-    print(f'{word}: {freq}')
+# Drop unnecessary columns and filter out Neutral and Irrelevant sentiments
+train_df = train_df[['Sentiment', 'Tweet']]
+filtered_train_df = train_df[train_df['Sentiment'].isin(['Positive', 'Negative'])]
 
-# Analyze the most informative features
-positive_informative_features = [(word, freq) for word, freq in positive_word_freq.items() if word not in negative_word_freq]
-negative_informative_features = [(word, freq) for word, freq in negative_word_freq.items() if word not in positive_word_freq]
-print("Most informative positive features:")
-for word, freq in sorted(positive_informative_features, key=lambda x: x[1], reverse=True)[:10]:
-    print(f'{word}: {freq}')
-print("Most informative negative features:")
-for word, freq in sorted(negative_informative_features, key=lambda x: x[1], reverse=True)[:10]:
-    print(f'{word}: {freq}')
+# Handle missing values
+filtered_train_df = filtered_train_df.dropna(subset=['Tweet'])
+filtered_train_df = filtered_train_df.reset_index(drop=True)
+
+# Split the dataset into features (X) and labels (y)
+X_train = filtered_train_df['Tweet']
+y_train = filtered_train_df['Sentiment']
+
+# Convert the text data into a matrix of token counts
+vectorizer = CountVectorizer()
+X_train_counts = vectorizer.fit_transform(X_train)
+
+# Train the Naive Bayes model using scikit-learn
+nb_model = MultinomialNB()
+nb_model.fit(X_train_counts, y_train)
+
+# Filter and preprocess the validation dataset
+filtered_validation_df = validation_df[validation_df['Sentiment'].isin(['Positive', 'Negative'])]
+
+# Handle missing values in the validation set
+filtered_validation_df = filtered_validation_df.dropna(subset=['Tweet'])
+filtered_validation_df = filtered_validation_df.reset_index(drop=True)
+
+# Split the validation dataset into features (X) and labels (y)
+X_validation = filtered_validation_df['Tweet']
+y_validation = filtered_validation_df['Sentiment']
+
+# Convert the validation text data into a matrix of token counts
+X_validation_counts = vectorizer.transform(X_validation)
+
+# Make predictions on the validation set
+y_pred = nb_model.predict(X_validation_counts)
+
+# Evaluate the model
+accuracy = accuracy_score(y_validation, y_pred)
+report = classification_report(y_validation, y_pred)
+conf_matrix = confusion_matrix(y_validation, y_pred)
+
+# Print the evaluation results
+print(f"Accuracy: {accuracy:.4f}")
+print("Classification Report:")
+print(report)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+# Load the NLTK resources (for stopwords and word tokenization)
+nltk.download('punkt')
+nltk.download('stopwords')
